@@ -25,7 +25,7 @@ use keystore2::{authorization::AuthorizationManager, id_rotation::IdRotationStat
 use legacykeystore::LegacyKeystore;
 use log::{error, info};
 use rusqlite::trace as sqlite_trace;
-use std::{os::raw::c_int, panic, path::Path, sync::mpsc::channel};
+use std::{os::raw::c_int, panic, path::Path, sync::mpsc::channel, time::Duration};
 
 static KS2_SERVICE_NAME: &str = "android.system.keystore2.IKeystoreService/default";
 static APC_SERVICE_NAME: &str = "android.security.apc";
@@ -109,9 +109,17 @@ fn main() {
     binder::ProcessState::set_thread_pool_max_thread_count(20);
     binder::ProcessState::start_thread_pool();
 
-    let ks_service = KeystoreService::new_native_binder(id_rotation_state).unwrap_or_else(|e| {
-        panic!("Failed to create service {KS2_SERVICE_NAME} because of {e:?}.");
-    });
+    let ks_service = loop {
+        match KeystoreService::new_native_binder(id_rotation_state.clone()) {
+            Ok(service) => break service,
+            Err(e) => {
+                error!(
+                    "Failed to create service {KS2_SERVICE_NAME} ({e:?}); retrying in 5 seconds."
+                );
+                std::thread::sleep(Duration::from_secs(5));
+            }
+        }
+    };
     binder::add_service(KS2_SERVICE_NAME, ks_service.as_binder()).unwrap_or_else(|e| {
         panic!("Failed to register service {KS2_SERVICE_NAME} because of {e:?}.");
     });
